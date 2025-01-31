@@ -1,0 +1,131 @@
+# 1. Importação das Bibliotecas
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from neuralprophet import NeuralProphet
+from termcolor import colored
+
+# 2. Carregar dados
+dados = pd.read_csv('C:/Users/Operação/Desktop/Projeto/basedadosseguranca2.csv', delimiter=';')
+
+# 3. Verificação Inicial
+print(colored("Dados iniciais:", 'cyan', attrs=['bold']))
+print(dados.head())
+print(f"\n{colored('Shape do dataset:', 'yellow')} {dados.shape}")
+print(colored("\nInformações do dataset:", 'cyan', attrs=['bold']))
+print(dados.info())
+
+# 4. Verificar valores ausentes
+print(colored("\nValores ausentes por coluna:", 'yellow'))
+print(dados.isnull().sum())
+
+# 5. Preencher valores ausentes
+dados['Motorista'] = dados['Motorista'].fillna(dados['Motorista'].mode()[0])
+
+for column in dados.columns:
+    if dados[column].dtype == 'object' and column != 'Motorista':
+        dados[column] = dados[column].fillna(dados[column].mode()[0])
+    elif dados[column].dtype in ['int64', 'float64']:
+        dados[column] = dados[column].fillna(dados[column].mean())
+
+# 6. Verificar os tipos de dados
+print(colored("\nTipos de dados por coluna:", 'cyan', attrs=['bold']))
+print(dados.dtypes)
+
+# Converter colunas de data para datetime
+dados['Data'] = pd.to_datetime(dados['Data'], dayfirst=True)
+
+# 7. Estatísticas Descritivas
+print(colored("\nEstatísticas descritivas do dataset:", 'cyan', attrs=['bold']))
+print(dados.describe())
+
+# 8. Remover duplicatas agregando a quantidade de eventos por data
+df_aggregated = dados.groupby('Data', as_index=False)['QUANTIDADE'].sum()
+
+# 9. Preparar os dados para o NeuralProphet
+df = df_aggregated.rename(columns={'Data': 'ds', 'QUANTIDADE': 'y'})
+
+# 10. Criar o modelo NeuralProphet
+modelo = NeuralProphet()
+
+# 11. Ajustar o modelo aos dados
+modelo.fit(df, freq='D')
+
+# 12. Criar um DataFrame para as futuras previsões
+futuro = modelo.make_future_dataframe(df, periods=30)
+
+# 13. Fazer a previsão
+previsao = modelo.predict(futuro)
+
+# 14. Filtrar a previsão para a data específica
+data_especifica = '2024-09-27'  # Atualizado para a data desejada
+previsao_hoje = previsao[previsao['ds'] == data_especifica]
+
+if previsao_hoje.empty:
+    print(f"Não há previsão disponível para a data {data_especifica}.")
+    total_previsto_hoje = 0  # Definir como 0 para evitar erros
+else:
+    total_previsto_hoje = previsao_hoje['yhat1'].values[0]
+    print(f"\nPrevisão para {data_especifica}:")
+    print(previsao_hoje)
+
+# 15. Analisando os 10 motoristas mais propensos a eventos
+total_eventos = dados['QUANTIDADE'].sum()  # Total de eventos históricos
+
+# Certifique-se de que `total_previsto_hoje` não seja acessado sem uma verificação adequada
+if not previsao_hoje.empty:
+    total_previsto_hoje = previsao_hoje['yhat1'].values[0]  
+
+# Agregar eventos por motorista, criticidade e local
+eventos_por_motorista = dados.groupby(['Motorista', 'Criticidade', 'Local'])['QUANTIDADE'].sum().reset_index()
+
+# Ordenar os motoristas mais propensos a eventos
+top_10_motoristas = eventos_por_motorista.sort_values(by='QUANTIDADE', ascending=False).head(10)
+
+# Calcular a porcentagem de probabilidade de cada motorista ter eventos no dia específico
+top_10_motoristas['Probabilidade'] = (top_10_motoristas['QUANTIDADE'] / total_eventos) * total_previsto_hoje 
+
+# Exibir os 10 motoristas mais propensos com a probabilidade de eventos, criticidade e local, 
+# evitando a repetição de "Local" e "Criticidade" para motoristas consecutivos
+print(colored(f"\nProbabilidade dos 10 motoristas mais propensos a eventos em {data_especifica}:", 'yellow', attrs=['bold']))
+
+previous_local = None
+previous_criticidade = None
+
+for index, row in top_10_motoristas.iterrows():
+    # Verifica se o local ou criticidade mudaram e só exibe quando mudarem
+    local_display = row['Local'] if row['Local'] != previous_local else ''
+    criticidade_display = row['Criticidade'] if row['Criticidade'] != previous_criticidade else ''
+    
+    print(colored(f"Motorista: {row['Motorista']}, Criticidade: {criticidade_display}, Local: {local_display}, Probabilidade: {row['Probabilidade']:.2f}", 'green'))
+
+    previous_local = row['Local']
+    previous_criticidade = row['Criticidade']
+
+# 16. Criar gráfico de barras para os motoristas mais propensos com fundo ggplot e barras roxas
+plt.figure(figsize=(10, 6))
+
+# Definir o estilo ggplot
+plt.style.use('ggplot')
+
+# Plotar o gráfico de barras com barras roxas
+sns.barplot(x='Motorista', y='Probabilidade', data=top_10_motoristas, color='purple')
+
+# Adicionar rótulos de probabilidade em cima de cada barra
+for index, row in top_10_motoristas.iterrows():
+    plt.text(index, row['Probabilidade'] + 0.5, f"{row['Probabilidade']:.1f}%", ha='center', va='bottom', color='black', fontsize=10)
+
+# Definir o título e os rótulos com cores padrão
+plt.title(f'Probabilidade dos Top 10 Motoristas para Eventos em {data_especifica}', fontsize=16)
+plt.xlabel('Motorista', fontsize=12)
+plt.ylabel('Probabilidade de Eventos (%)', fontsize=12)
+
+# Ajustar a rotação dos ticks do eixo X
+plt.xticks(rotation=45)
+
+# Ajustar o layout para uma melhor visualização
+plt.tight_layout()
+
+# Exibir o gráfico
+plt.show()
